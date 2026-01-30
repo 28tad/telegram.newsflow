@@ -42,10 +42,9 @@ bot.command('stats', async (ctx) => {
   }
 })
 
-// Pending command - show digest
+// Pending command - send each news as separate message
 bot.command('pending', async (ctx) => {
   try {
-    // Get first active project (for now)
     const projectResult = await query('SELECT * FROM projects WHERE is_active = true LIMIT 1')
     const project = projectResult.rows[0]
 
@@ -68,28 +67,21 @@ bot.command('pending', async (ctx) => {
       return
     }
 
-    let message = `📰 Найдено ${newsList.length} новостей | ${project.name}\n\n`
-    const buttons: any[][] = []
+    await ctx.reply(`📰 Найдено ${newsList.length} новостей | ${project.name}`)
 
-    newsList.forEach((news: any, i: number) => {
-      const shortTitle = news.title.length > 50
-        ? news.title.substring(0, 50) + '...'
-        : news.title
-      message += `${i + 1}. ${shortTitle}\n`
+    for (const news of newsList) {
+      const message = `📰 ${news.title}\n\n${news.summary || ''}\n\n🔗 ${news.url || ''}`
 
-      buttons.push([
-        Markup.button.callback('✅', `approve:${news.id}`),
-        Markup.button.callback('❌', `reject:${news.id}`),
-        Markup.button.callback('👁', `view:${news.id}`)
-      ])
-    })
+      const sent = await ctx.reply(message, Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
+          Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
+        ]
+      ]))
 
-    buttons.push([
-      Markup.button.callback('✅ Все', 'approve_all'),
-      Markup.button.callback('❌ Все', 'reject_all')
-    ])
-
-    ctx.reply(message, Markup.inlineKeyboard(buttons))
+      // Save message_id for later editing
+      await query('UPDATE news SET tg_message_id = $1 WHERE id = $2', [sent.message_id, news.id])
+    }
   } catch (err) {
     console.error('Pending error:', err)
     ctx.reply('Ошибка получения новостей')
@@ -99,63 +91,40 @@ bot.command('pending', async (ctx) => {
 // Callback handlers for moderation buttons
 bot.action(/^approve:(.+)$/, async (ctx) => {
   const newsId = ctx.match[1]
+  const result = await query('SELECT * FROM news WHERE id = $1', [newsId])
+  const news = result.rows[0]
+
+  if (!news) {
+    await ctx.answerCbQuery('Новость не найдена')
+    return
+  }
+
   await moderateNews(newsId, 'approved', ctx.from?.username || 'unknown')
-  await ctx.answerCbQuery('✅ Одобрено')
-  await updateDigestMessage(ctx)
+  await ctx.answerCbQuery('✅ Одобрено и выложено')
+
+  // Update message - remove buttons, show status
+  await ctx.editMessageText(
+    `✅ ${news.title}\n\n${news.summary || ''}\n\nВыложено в канал`
+  )
 })
 
 bot.action(/^reject:(.+)$/, async (ctx) => {
   const newsId = ctx.match[1]
-  await moderateNews(newsId, 'rejected', ctx.from?.username || 'unknown')
-  await ctx.answerCbQuery('❌ Отклонено')
-  await updateDigestMessage(ctx)
-})
-
-bot.action(/^view:(.+)$/, async (ctx) => {
-  const newsId = ctx.match[1]
   const result = await query('SELECT * FROM news WHERE id = $1', [newsId])
   const news = result.rows[0]
 
-  if (news) {
-    await ctx.answerCbQuery()
-    await ctx.reply(
-      `📰 ${news.title}\n\n` +
-      `${news.content || news.summary || 'Нет описания'}\n\n` +
-      `🔗 ${news.url || 'Нет ссылки'}`,
-      Markup.inlineKeyboard([
-        [
-          Markup.button.callback('✅ Одобрить', `approve:${newsId}`),
-          Markup.button.callback('❌ Отклонить', `reject:${newsId}`)
-        ]
-      ])
-    )
+  if (!news) {
+    await ctx.answerCbQuery('Новость не найдена')
+    return
   }
-})
 
-bot.action('approve_all', async (ctx) => {
-  await query(`
-    UPDATE news SET
-      status = 'approved',
-      moderated_by = $1,
-      moderated_at = now()
-    WHERE status = 'pending'
-  `, [ctx.from?.username || 'unknown'])
+  await moderateNews(newsId, 'rejected', ctx.from?.username || 'unknown')
+  await ctx.answerCbQuery('❌ Отклонено')
 
-  await ctx.answerCbQuery('✅ Все одобрены')
-  await updateDigestMessage(ctx)
-})
-
-bot.action('reject_all', async (ctx) => {
-  await query(`
-    UPDATE news SET
-      status = 'rejected',
-      moderated_by = $1,
-      moderated_at = now()
-    WHERE status = 'pending'
-  `, [ctx.from?.username || 'unknown'])
-
-  await ctx.answerCbQuery('❌ Все отклонены')
-  await updateDigestMessage(ctx)
+  // Update message - remove buttons, show status
+  await ctx.editMessageText(
+    `❌ ${news.title}\n\nОтклонено`
+  )
 })
 
 // Helper functions
@@ -198,65 +167,6 @@ async function publishToChannel(newsId: string) {
   }
 }
 
-async function updateDigestMessage(ctx: any) {
-  try {
-    // Get project
-    const projectResult = await query('SELECT * FROM projects WHERE is_active = true LIMIT 1')
-    const project = projectResult.rows[0]
-    if (!project) return
-
-    // Get all news (including moderated) from recent digest
-    const newsResult = await query(`
-      SELECT n.* FROM news n
-      JOIN sources s ON n.source_id = s.id
-      WHERE s.project_id = $1
-      ORDER BY n.created_at DESC
-      LIMIT 10
-    `, [project.id])
-
-    const newsList = newsResult.rows
-    const pendingCount = newsList.filter((n: any) => n.status === 'pending').length
-
-    if (pendingCount === 0) {
-      await ctx.editMessageText('✅ Все новости обработаны!')
-      return
-    }
-
-    let message = `📰 Новости | ${project.name}\n\n`
-    const buttons: any[][] = []
-
-    newsList.forEach((news: any, i: number) => {
-      const shortTitle = news.title.length > 50
-        ? news.title.substring(0, 50) + '...'
-        : news.title
-
-      if (news.status === 'approved') {
-        message += `${i + 1}. ✅ ${shortTitle}\n`
-      } else if (news.status === 'rejected') {
-        message += `${i + 1}. ❌ ${shortTitle}\n`
-      } else {
-        message += `${i + 1}. ${shortTitle}\n`
-        buttons.push([
-          Markup.button.callback('✅', `approve:${news.id}`),
-          Markup.button.callback('❌', `reject:${news.id}`),
-          Markup.button.callback('👁', `view:${news.id}`)
-        ])
-      }
-    })
-
-    if (buttons.length > 0) {
-      buttons.push([
-        Markup.button.callback('✅ Все', 'approve_all'),
-        Markup.button.callback('❌ Все', 'reject_all')
-      ])
-    }
-
-    await ctx.editMessageText(message, Markup.inlineKeyboard(buttons))
-  } catch (e) {
-    // Message might be already edited or deleted
-    console.error('Update digest error:', e)
-  }
-}
 
 // Send digest to moderation chat
 export async function sendDigest(projectId: string) {
