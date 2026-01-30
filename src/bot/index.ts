@@ -42,6 +42,60 @@ bot.command('stats', async (ctx) => {
   }
 })
 
+// Pending command - show digest
+bot.command('pending', async (ctx) => {
+  try {
+    // Get first active project (for now)
+    const projectResult = await query('SELECT * FROM projects WHERE is_active = true LIMIT 1')
+    const project = projectResult.rows[0]
+
+    if (!project) {
+      ctx.reply('Нет активных проектов')
+      return
+    }
+
+    const newsResult = await query(`
+      SELECT n.* FROM news n
+      JOIN sources s ON n.source_id = s.id
+      WHERE s.project_id = $1 AND n.status = 'pending'
+      ORDER BY n.created_at DESC
+      LIMIT 10
+    `, [project.id])
+
+    const newsList = newsResult.rows
+    if (newsList.length === 0) {
+      ctx.reply('✅ Нет новостей на модерации')
+      return
+    }
+
+    let message = `📰 Найдено ${newsList.length} новостей | ${project.name}\n\n`
+    const buttons: any[][] = []
+
+    newsList.forEach((news: any, i: number) => {
+      const shortTitle = news.title.length > 50
+        ? news.title.substring(0, 50) + '...'
+        : news.title
+      message += `${i + 1}. ${shortTitle}\n`
+
+      buttons.push([
+        Markup.button.callback('✅', `approve:${news.id}`),
+        Markup.button.callback('❌', `reject:${news.id}`),
+        Markup.button.callback('👁', `view:${news.id}`)
+      ])
+    })
+
+    buttons.push([
+      Markup.button.callback('✅ Все', 'approve_all'),
+      Markup.button.callback('❌ Все', 'reject_all')
+    ])
+
+    ctx.reply(message, Markup.inlineKeyboard(buttons))
+  } catch (err) {
+    console.error('Pending error:', err)
+    ctx.reply('Ошибка получения новостей')
+  }
+})
+
 // Callback handlers for moderation buttons
 bot.action(/^approve:(.+)$/, async (ctx) => {
   const newsId = ctx.match[1]
