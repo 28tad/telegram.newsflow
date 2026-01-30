@@ -1,0 +1,10 @@
+name: newsflow
+
+services:
+  app:
+    build: .
+    container_name: newsflow
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3010:3010"
