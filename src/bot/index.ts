@@ -199,16 +199,62 @@ async function publishToChannel(newsId: string) {
 }
 
 async function updateDigestMessage(ctx: any) {
-  // Update the digest message after moderation
-  const pending = await query(`SELECT COUNT(*) FROM news WHERE status = 'pending'`)
-  const count = parseInt(pending.rows[0].count)
+  try {
+    // Get project
+    const projectResult = await query('SELECT * FROM projects WHERE is_active = true LIMIT 1')
+    const project = projectResult.rows[0]
+    if (!project) return
 
-  if (count === 0) {
-    try {
+    // Get all news (including moderated) from recent digest
+    const newsResult = await query(`
+      SELECT n.* FROM news n
+      JOIN sources s ON n.source_id = s.id
+      WHERE s.project_id = $1
+      ORDER BY n.created_at DESC
+      LIMIT 10
+    `, [project.id])
+
+    const newsList = newsResult.rows
+    const pendingCount = newsList.filter((n: any) => n.status === 'pending').length
+
+    if (pendingCount === 0) {
       await ctx.editMessageText('✅ Все новости обработаны!')
-    } catch (e) {
-      // Message might be already edited
+      return
     }
+
+    let message = `📰 Новости | ${project.name}\n\n`
+    const buttons: any[][] = []
+
+    newsList.forEach((news: any, i: number) => {
+      const shortTitle = news.title.length > 50
+        ? news.title.substring(0, 50) + '...'
+        : news.title
+
+      if (news.status === 'approved') {
+        message += `${i + 1}. ✅ ${shortTitle}\n`
+      } else if (news.status === 'rejected') {
+        message += `${i + 1}. ❌ ${shortTitle}\n`
+      } else {
+        message += `${i + 1}. ${shortTitle}\n`
+        buttons.push([
+          Markup.button.callback('✅', `approve:${news.id}`),
+          Markup.button.callback('❌', `reject:${news.id}`),
+          Markup.button.callback('👁', `view:${news.id}`)
+        ])
+      }
+    })
+
+    if (buttons.length > 0) {
+      buttons.push([
+        Markup.button.callback('✅ Все', 'approve_all'),
+        Markup.button.callback('❌ Все', 'reject_all')
+      ])
+    }
+
+    await ctx.editMessageText(message, Markup.inlineKeyboard(buttons))
+  } catch (e) {
+    // Message might be already edited or deleted
+    console.error('Update digest error:', e)
   }
 }
 
