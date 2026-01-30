@@ -261,7 +261,14 @@ export async function sendDigest(projectId: string) {
   )
 }
 
-export function startBot() {
+export async function startBot() {
+  // Register bot commands for menu
+  await bot.telegram.setMyCommands([
+    { command: 'start', description: 'Начать работу' },
+    { command: 'pending', description: 'Новости на модерации' },
+    { command: 'stats', description: 'Статистика' },
+  ])
+
   bot.launch()
   console.log('Telegram bot started')
 

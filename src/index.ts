@@ -17,7 +17,7 @@ async function main() {
 
   // Start Telegram bot
   if (config.bot.token) {
-    startBot()
+    await startBot()
   } else {
     console.warn('BOT_TOKEN not set, bot disabled')
   }
