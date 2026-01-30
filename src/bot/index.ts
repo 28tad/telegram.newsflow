@@ -70,14 +70,21 @@ bot.command('pending', async (ctx) => {
     await ctx.reply(`📰 Найдено ${newsList.length} новостей | ${project.name}`)
 
     for (const news of newsList) {
-      const message = `📰 ${news.title}\n\n${news.summary || ''}\n\n🔗 ${news.url || ''}`
+      const message =
+        `━━━━━━━━━━━━━━━━━━━━━\n\n` +
+        `📰 *${news.title}*\n\n` +
+        `${news.summary || ''}\n\n` +
+        `🔗 ${news.url || ''}`
 
-      const sent = await ctx.reply(message, Markup.inlineKeyboard([
-        [
-          Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
-          Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
-        ]
-      ]))
+      const sent = await ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
+            Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
+          ]
+        ])
+      })
 
       // Save message_id for later editing
       await query('UPDATE news SET tg_message_id = $1 WHERE id = $2', [sent.message_id, news.id])
@@ -104,7 +111,11 @@ bot.action(/^approve:(.+)$/, async (ctx) => {
 
   // Update message - remove buttons, show status
   await ctx.editMessageText(
-    `✅ ${news.title}\n\n${news.summary || ''}\n\nВыложено в канал`
+    `━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `✅ *${news.title}*\n\n` +
+    `${news.summary || ''}\n\n` +
+    `📢 Выложено в канал`,
+    { parse_mode: 'Markdown' }
   )
 })
 
@@ -123,7 +134,10 @@ bot.action(/^reject:(.+)$/, async (ctx) => {
 
   // Update message - remove buttons, show status
   await ctx.editMessageText(
-    `❌ ${news.title}\n\nОтклонено`
+    `━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `❌ *${news.title}*\n\n` +
+    `Отклонено`,
+    { parse_mode: 'Markdown' }
   )
 })
 
