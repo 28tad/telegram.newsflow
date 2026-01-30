@@ -70,21 +70,36 @@ bot.command('pending', async (ctx) => {
     await ctx.reply(`📰 Найдено ${newsList.length} новостей | ${project.name}`)
 
     for (const news of newsList) {
-      const message =
-        `━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      const caption =
         `📰 *${news.title}*\n\n` +
         `${news.summary || ''}\n\n` +
         `🔗 ${news.url || ''}`
 
-      const sent = await ctx.reply(message, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
-            Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
-          ]
-        ])
-      })
+      let sent
+      if (news.image_url) {
+        // Send with photo
+        sent = await ctx.replyWithPhoto(news.image_url, {
+          caption,
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [
+              Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
+              Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
+            ]
+          ])
+        })
+      } else {
+        // Send text only
+        sent = await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━\n\n${caption}`, {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [
+              Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
+              Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
+            ]
+          ])
+        })
+      }
 
       // Save message_id for later editing
       await query('UPDATE news SET tg_message_id = $1 WHERE id = $2', [sent.message_id, news.id])
@@ -110,13 +125,16 @@ bot.action(/^approve:(.+)$/, async (ctx) => {
   await ctx.answerCbQuery('✅ Одобрено и выложено')
 
   // Update message - remove buttons, show status
-  await ctx.editMessageText(
-    `━━━━━━━━━━━━━━━━━━━━━\n\n` +
+  const approvedText =
     `✅ *${news.title}*\n\n` +
     `${news.summary || ''}\n\n` +
-    `📢 Выложено в канал`,
-    { parse_mode: 'Markdown' }
-  )
+    `📢 Выложено в канал`
+
+  if (news.image_url) {
+    await ctx.editMessageCaption(approvedText, { parse_mode: 'Markdown' })
+  } else {
+    await ctx.editMessageText(`━━━━━━━━━━━━━━━━━━━━━\n\n${approvedText}`, { parse_mode: 'Markdown' })
+  }
 })
 
 bot.action(/^reject:(.+)$/, async (ctx) => {
@@ -133,12 +151,13 @@ bot.action(/^reject:(.+)$/, async (ctx) => {
   await ctx.answerCbQuery('❌ Отклонено')
 
   // Update message - remove buttons, show status
-  await ctx.editMessageText(
-    `━━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `❌ *${news.title}*\n\n` +
-    `Отклонено`,
-    { parse_mode: 'Markdown' }
-  )
+  const rejectedText = `❌ *${news.title}*\n\nОтклонено`
+
+  if (news.image_url) {
+    await ctx.editMessageCaption(rejectedText, { parse_mode: 'Markdown' })
+  } else {
+    await ctx.editMessageText(`━━━━━━━━━━━━━━━━━━━━━\n\n${rejectedText}`, { parse_mode: 'Markdown' })
+  }
 })
 
 // Helper functions
@@ -169,13 +188,22 @@ async function publishToChannel(newsId: string) {
   const news = result.rows[0]
   if (!news || !news.tg_publish_channel_id) return
 
+  const caption =
+    `📰 *${news.title}*\n\n` +
+    `${news.summary || ''}\n\n` +
+    `${news.url ? `🔗 [Читать полностью](${news.url})` : ''}`
+
   try {
-    await bot.telegram.sendMessage(
-      news.tg_publish_channel_id,
-      `📰 ${news.title}\n\n` +
-      `${news.summary || ''}\n\n` +
-      `${news.url ? `🔗 Читать: ${news.url}` : ''}`
-    )
+    if (news.image_url) {
+      await bot.telegram.sendPhoto(news.tg_publish_channel_id, news.image_url, {
+        caption,
+        parse_mode: 'Markdown'
+      })
+    } else {
+      await bot.telegram.sendMessage(news.tg_publish_channel_id, caption, {
+        parse_mode: 'Markdown'
+      })
+    }
   } catch (err) {
     console.error('Publish error:', err)
   }
