@@ -9,7 +9,13 @@ export interface PublishResult {
 
 export function formatNewsForChannel(news: News): string {
   const title = news.aiTitle || news.title
-  const content = news.aiContent || news.content || ''
+  let content = news.aiContent || news.content || ''
+
+  // Обрезаем контент (лимит caption в Telegram ~1024)
+  const maxContentLength = 600
+  if (content.length > maxContentLength) {
+    content = content.substring(0, maxContentLength) + '...'
+  }
 
   let text = `📰 *${escapeMarkdown(title)}*`
 
@@ -26,7 +32,13 @@ export function formatNewsForChannel(news: News): string {
 
 export function formatNewsForModeration(news: News): string {
   const title = news.aiTitle || news.title
-  const content = news.aiContent || news.content || ''
+  let content = news.aiContent || news.content || ''
+
+  // Обрезаем контент (лимит caption в Telegram ~1024)
+  const maxContentLength = 600
+  if (content.length > maxContentLength) {
+    content = content.substring(0, maxContentLength) + '...'
+  }
 
   let text = `📰 *${escapeMarkdown(title)}*`
 
