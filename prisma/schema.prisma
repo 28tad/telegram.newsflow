@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Source {
+  id            String    @id @default(uuid())
+  name          String    @db.VarChar(100)
+  type          String    @db.VarChar(20)  // 'rss', 'manual'
+  url           String?
+  config        Json      @default("{}")
+  isActive      Boolean   @default(true) @map("is_active")
+  parseInterval Int       @default(3600) @map("parse_interval")
+  lastParsedAt  DateTime? @map("last_parsed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  news News[]
+
+  @@map("sources")
+}
+
+model News {
+  id         String   @id @default(uuid())
+  sourceId   String?  @map("source_id")
+  externalId String?  @map("external_id") @db.VarChar(255)
+
+  // Original content
+  title    String
+  content  String?
+  url      String?
+  imageUrl String? @map("image_url")
+
+  // AI processed content
+  aiTitle   String? @map("ai_title")
+  aiContent String? @map("ai_content")
+
+  // Status: raw -> processed -> pending -> approved/rejected
+  status String @default("raw") @db.VarChar(20)
+
+  // Telegram
+  tgMessageId BigInt?   @map("tg_message_id")
+  moderatedBy String?   @map("moderated_by") @db.VarChar(100)
+  moderatedAt DateTime? @map("moderated_at")
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  source Source? @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, externalId])
+  @@index([status])
+  @@index([sourceId])
+  @@map("news")
+}
+
+model CompanyContext {
+  id        String   @id @default(uuid())
+  key       String   @unique @db.VarChar(50)
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("company_context")
+}

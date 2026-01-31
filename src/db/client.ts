@@ -1,10 +1,12 @@
-import { Pool } from 'pg'
-import { config } from '../config'
+import { PrismaClient } from '@prisma/client'
 
-export const pool = new Pool({
-  connectionString: config.database.url,
-})
+export const prisma = new PrismaClient()
 
-export const query = (text: string, params?: unknown[]) => {
-  return pool.query(text, params)
+export async function connectDatabase() {
+  await prisma.$connect()
+  console.log('Database connected')
+}
+
+export async function disconnectDatabase() {
+  await prisma.$disconnect()
 }

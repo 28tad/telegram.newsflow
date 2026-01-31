@@ -1,6 +1,7 @@
 import { Telegraf, Markup } from 'telegraf'
 import { config } from '../config'
-import { query } from '../db/client'
+import * as newsService from '../services/news'
+import { publishToChannel, formatNewsForModeration } from '../services/publisher'
 
 export const bot = new Telegraf(config.telegram.botToken)
 
@@ -18,21 +19,14 @@ bot.start((ctx) => {
 // Stats command
 bot.command('stats', async (ctx) => {
   try {
-    const stats = await query(`
-      SELECT status, COUNT(*) as count
-      FROM news
-      GROUP BY status
-    `)
-
-    const pending = stats.rows.find(r => r.status === 'pending')?.count || 0
-    const approved = stats.rows.find(r => r.status === 'approved')?.count || 0
-    const rejected = stats.rows.find(r => r.status === 'rejected')?.count || 0
+    const stats = await newsService.getStats()
 
     ctx.reply(
       '📊 Статистика NewsFlow\n\n' +
-      `⏳ На модерации: ${pending}\n` +
-      `✅ Одобрено: ${approved}\n` +
-      `❌ Отклонено: ${rejected}`
+      `⏳ На модерации: ${stats.pending}\n` +
+      `✅ Одобрено: ${stats.approved}\n` +
+      `❌ Отклонено: ${stats.rejected}\n` +
+      `📝 Новых: ${stats.raw}`
     )
   } catch (err) {
     console.error('Stats error:', err)
@@ -40,17 +34,11 @@ bot.command('stats', async (ctx) => {
   }
 })
 
-// Pending command - send each news as separate message
+// Pending command
 bot.command('pending', async (ctx) => {
   try {
-    const newsResult = await query(`
-      SELECT * FROM news
-      WHERE status = 'pending'
-      ORDER BY created_at DESC
-      LIMIT 10
-    `)
+    const newsList = await newsService.getPending(10)
 
-    const newsList = newsResult.rows
     if (newsList.length === 0) {
       ctx.reply('✅ Нет новостей на модерации')
       return
@@ -59,36 +47,29 @@ bot.command('pending', async (ctx) => {
     await ctx.reply(`📰 Найдено ${newsList.length} новостей`)
 
     for (const news of newsList) {
-      const caption =
-        `📰 *${news.title}*\n\n` +
-        `${news.summary || ''}\n\n` +
-        `🔗 ${news.url || ''}`
+      const caption = formatNewsForModeration(news)
+      const buttons = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
+          Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
+        ]
+      ])
 
       let sent
-      if (news.image_url) {
-        sent = await ctx.replyWithPhoto(news.image_url, {
+      if (news.imageUrl) {
+        sent = await ctx.replyWithPhoto(news.imageUrl, {
           caption,
           parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard([
-            [
-              Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
-              Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
-            ]
-          ])
+          ...buttons
         })
       } else {
         sent = await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━\n\n${caption}`, {
           parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard([
-            [
-              Markup.button.callback('✅ Одобрить', `approve:${news.id}`),
-              Markup.button.callback('❌ Отклонить', `reject:${news.id}`)
-            ]
-          ])
+          ...buttons
         })
       }
 
-      await query('UPDATE news SET tg_message_id = $1 WHERE id = $2', [sent.message_id, news.id])
+      await newsService.updateTelegramMessageId(news.id, BigInt(sent.message_id))
     }
   } catch (err) {
     console.error('Pending error:', err)
@@ -99,23 +80,32 @@ bot.command('pending', async (ctx) => {
 // Approve handler
 bot.action(/^approve:(.+)$/, async (ctx) => {
   const newsId = ctx.match[1]
-  const result = await query('SELECT * FROM news WHERE id = $1', [newsId])
-  const news = result.rows[0]
+  const news = await newsService.getById(newsId)
 
   if (!news) {
     await ctx.answerCbQuery('Новость не найдена')
     return
   }
 
-  await moderateNews(newsId, 'approved', ctx.from?.username || 'unknown')
+  const moderator = ctx.from?.username || 'unknown'
+  await newsService.moderate(newsId, 'approved', moderator)
+
+  // Publish to channel
+  const channelId = config.telegram.publishChannelId
+  if (channelId) {
+    const result = await publishToChannel(bot.telegram, channelId, news)
+    if (!result.success) {
+      await ctx.answerCbQuery('Ошибка публикации')
+      return
+    }
+  }
+
   await ctx.answerCbQuery('✅ Одобрено и выложено')
 
-  const approvedText =
-    `✅ *${news.title}*\n\n` +
-    `${news.summary || ''}\n\n` +
-    `📢 Выложено в канал`
+  const title = news.aiTitle || news.title
+  const approvedText = `✅ *${title}*\n\n📢 Выложено в канал`
 
-  if (news.image_url) {
+  if (news.imageUrl) {
     await ctx.editMessageCaption(approvedText, { parse_mode: 'Markdown' })
   } else {
     await ctx.editMessageText(`━━━━━━━━━━━━━━━━━━━━━\n\n${approvedText}`, { parse_mode: 'Markdown' })
@@ -125,73 +115,27 @@ bot.action(/^approve:(.+)$/, async (ctx) => {
 // Reject handler
 bot.action(/^reject:(.+)$/, async (ctx) => {
   const newsId = ctx.match[1]
-  const result = await query('SELECT * FROM news WHERE id = $1', [newsId])
-  const news = result.rows[0]
+  const news = await newsService.getById(newsId)
 
   if (!news) {
     await ctx.answerCbQuery('Новость не найдена')
     return
   }
 
-  await moderateNews(newsId, 'rejected', ctx.from?.username || 'unknown')
+  const moderator = ctx.from?.username || 'unknown'
+  await newsService.moderate(newsId, 'rejected', moderator)
+
   await ctx.answerCbQuery('❌ Отклонено')
 
-  const rejectedText = `❌ *${news.title}*\n\nОтклонено`
+  const title = news.aiTitle || news.title
+  const rejectedText = `❌ *${title}*\n\nОтклонено`
 
-  if (news.image_url) {
+  if (news.imageUrl) {
     await ctx.editMessageCaption(rejectedText, { parse_mode: 'Markdown' })
   } else {
     await ctx.editMessageText(`━━━━━━━━━━━━━━━━━━━━━\n\n${rejectedText}`, { parse_mode: 'Markdown' })
   }
 })
-
-// Helper: moderate news
-async function moderateNews(newsId: string, status: string, moderator: string) {
-  await query(`
-    UPDATE news SET
-      status = $1,
-      moderated_by = $2,
-      moderated_at = now()
-    WHERE id = $3
-  `, [status, moderator, newsId])
-
-  if (status === 'approved') {
-    await publishToChannel(newsId)
-  }
-}
-
-// Helper: publish to channel
-async function publishToChannel(newsId: string) {
-  const channelId = config.telegram.publishChannelId
-  if (!channelId) {
-    console.warn('TG_PUBLISH_CHANNEL_ID not set')
-    return
-  }
-
-  const result = await query('SELECT * FROM news WHERE id = $1', [newsId])
-  const news = result.rows[0]
-  if (!news) return
-
-  const caption =
-    `📰 *${news.title}*\n\n` +
-    `${news.summary || ''}\n\n` +
-    `${news.url ? `🔗 [Читать полностью](${news.url})` : ''}`
-
-  try {
-    if (news.image_url) {
-      await bot.telegram.sendPhoto(channelId, news.image_url, {
-        caption,
-        parse_mode: 'Markdown'
-      })
-    } else {
-      await bot.telegram.sendMessage(channelId, caption, {
-        parse_mode: 'Markdown'
-      })
-    }
-  } catch (err) {
-    console.error('Publish error:', err)
-  }
-}
 
 // Start bot
 export async function startBot() {
