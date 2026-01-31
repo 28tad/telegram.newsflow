@@ -64,7 +64,7 @@ function extractImageUrl(item: Parser.Item): string | null {
   }
 
   // Try to find image in content
-  const content = item.content || item['content:encoded'] || ''
+  const content = item.content || (item as any)['content:encoded'] || ''
   const imgMatch = content.match(/<img[^>]+src=["']([^"']+)["']/)
   if (imgMatch) {
     return imgMatch[1]
