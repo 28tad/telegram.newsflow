@@ -4,8 +4,10 @@ export const config = {
   database: {
     url: process.env.DATABASE_URL || '',
   },
-  bot: {
-    token: process.env.BOT_TOKEN || '',
+  telegram: {
+    botToken: process.env.BOT_TOKEN || '',
+    moderationChatId: process.env.TG_MODERATION_CHAT_ID || '',
+    publishChannelId: process.env.TG_PUBLISH_CHANNEL_ID || '',
   },
   api: {
     port: parseInt(process.env.API_PORT || '3010'),

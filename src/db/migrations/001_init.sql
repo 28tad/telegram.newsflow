@@ -1,22 +1,9 @@
--- Projects (sites that receive news)
-CREATE TABLE IF NOT EXISTS projects (
-  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name                   VARCHAR(100) NOT NULL,
-  slug                   VARCHAR(50) UNIQUE NOT NULL,
-  tg_moderation_chat_id  BIGINT NOT NULL,
-  tg_publish_channel_id  BIGINT,
-  api_key                VARCHAR(64) NOT NULL,
-  is_active              BOOLEAN DEFAULT true,
-  created_at             TIMESTAMPTZ DEFAULT now()
-);
-
--- News sources
+-- News sources (RSS, manual, etc.)
 CREATE TABLE IF NOT EXISTS sources (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id      UUID REFERENCES projects(id) ON DELETE CASCADE,
   name            VARCHAR(100) NOT NULL,
-  type            VARCHAR(20) NOT NULL,
-  url             TEXT NOT NULL,
+  type            VARCHAR(20) NOT NULL,  -- 'rss', 'manual'
+  url             TEXT,
   config          JSONB DEFAULT '{}',
   is_active       BOOLEAN DEFAULT true,
   parse_interval  INTEGER DEFAULT 3600,
@@ -24,17 +11,26 @@ CREATE TABLE IF NOT EXISTS sources (
   created_at      TIMESTAMPTZ DEFAULT now()
 );
 
--- News articles
+-- News articles (original + AI processed)
 CREATE TABLE IF NOT EXISTS news (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   source_id     UUID REFERENCES sources(id) ON DELETE CASCADE,
   external_id   VARCHAR(255),
+
+  -- Original content
   title         TEXT NOT NULL,
   content       TEXT,
-  summary       TEXT,
   url           TEXT,
   image_url     TEXT,
-  status        VARCHAR(20) DEFAULT 'pending',
+
+  -- AI processed content
+  ai_title      TEXT,
+  ai_content    TEXT,
+
+  -- Status: raw -> processed -> pending -> approved/rejected
+  status        VARCHAR(20) DEFAULT 'raw',
+
+  -- Telegram
   tg_message_id BIGINT,
   moderated_by  VARCHAR(100),
   moderated_at  TIMESTAMPTZ,
@@ -47,4 +43,4 @@ CREATE TABLE IF NOT EXISTS news (
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_news_status ON news(status);
 CREATE INDEX IF NOT EXISTS idx_news_source ON news(source_id);
-CREATE INDEX IF NOT EXISTS idx_sources_project ON sources(project_id);
+CREATE INDEX IF NOT EXISTS idx_sources_active ON sources(is_active);

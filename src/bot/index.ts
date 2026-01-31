@@ -2,7 +2,7 @@ import { Telegraf, Markup } from 'telegraf'
 import { config } from '../config'
 import { query } from '../db/client'
 
-export const bot = new Telegraf(config.bot.token)
+export const bot = new Telegraf(config.telegram.botToken)
 
 // Start command
 bot.start((ctx) => {
@@ -19,9 +19,7 @@ bot.start((ctx) => {
 bot.command('stats', async (ctx) => {
   try {
     const stats = await query(`
-      SELECT
-        status,
-        COUNT(*) as count
+      SELECT status, COUNT(*) as count
       FROM news
       GROUP BY status
     `)
@@ -45,21 +43,12 @@ bot.command('stats', async (ctx) => {
 // Pending command - send each news as separate message
 bot.command('pending', async (ctx) => {
   try {
-    const projectResult = await query('SELECT * FROM projects WHERE is_active = true LIMIT 1')
-    const project = projectResult.rows[0]
-
-    if (!project) {
-      ctx.reply('Нет активных проектов')
-      return
-    }
-
     const newsResult = await query(`
-      SELECT n.* FROM news n
-      JOIN sources s ON n.source_id = s.id
-      WHERE s.project_id = $1 AND n.status = 'pending'
-      ORDER BY n.created_at DESC
+      SELECT * FROM news
+      WHERE status = 'pending'
+      ORDER BY created_at DESC
       LIMIT 10
-    `, [project.id])
+    `)
 
     const newsList = newsResult.rows
     if (newsList.length === 0) {
@@ -67,7 +56,7 @@ bot.command('pending', async (ctx) => {
       return
     }
 
-    await ctx.reply(`📰 Найдено ${newsList.length} новостей | ${project.name}`)
+    await ctx.reply(`📰 Найдено ${newsList.length} новостей`)
 
     for (const news of newsList) {
       const caption =
@@ -77,7 +66,6 @@ bot.command('pending', async (ctx) => {
 
       let sent
       if (news.image_url) {
-        // Send with photo
         sent = await ctx.replyWithPhoto(news.image_url, {
           caption,
           parse_mode: 'Markdown',
@@ -89,7 +77,6 @@ bot.command('pending', async (ctx) => {
           ])
         })
       } else {
-        // Send text only
         sent = await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━\n\n${caption}`, {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([
@@ -101,7 +88,6 @@ bot.command('pending', async (ctx) => {
         })
       }
 
-      // Save message_id for later editing
       await query('UPDATE news SET tg_message_id = $1 WHERE id = $2', [sent.message_id, news.id])
     }
   } catch (err) {
@@ -110,7 +96,7 @@ bot.command('pending', async (ctx) => {
   }
 })
 
-// Callback handlers for moderation buttons
+// Approve handler
 bot.action(/^approve:(.+)$/, async (ctx) => {
   const newsId = ctx.match[1]
   const result = await query('SELECT * FROM news WHERE id = $1', [newsId])
@@ -124,7 +110,6 @@ bot.action(/^approve:(.+)$/, async (ctx) => {
   await moderateNews(newsId, 'approved', ctx.from?.username || 'unknown')
   await ctx.answerCbQuery('✅ Одобрено и выложено')
 
-  // Update message - remove buttons, show status
   const approvedText =
     `✅ *${news.title}*\n\n` +
     `${news.summary || ''}\n\n` +
@@ -137,6 +122,7 @@ bot.action(/^approve:(.+)$/, async (ctx) => {
   }
 })
 
+// Reject handler
 bot.action(/^reject:(.+)$/, async (ctx) => {
   const newsId = ctx.match[1]
   const result = await query('SELECT * FROM news WHERE id = $1', [newsId])
@@ -150,7 +136,6 @@ bot.action(/^reject:(.+)$/, async (ctx) => {
   await moderateNews(newsId, 'rejected', ctx.from?.username || 'unknown')
   await ctx.answerCbQuery('❌ Отклонено')
 
-  // Update message - remove buttons, show status
   const rejectedText = `❌ *${news.title}*\n\nОтклонено`
 
   if (news.image_url) {
@@ -160,7 +145,7 @@ bot.action(/^reject:(.+)$/, async (ctx) => {
   }
 })
 
-// Helper functions
+// Helper: moderate news
 async function moderateNews(newsId: string, status: string, moderator: string) {
   await query(`
     UPDATE news SET
@@ -170,23 +155,22 @@ async function moderateNews(newsId: string, status: string, moderator: string) {
     WHERE id = $3
   `, [status, moderator, newsId])
 
-  // If approved, publish to channel
   if (status === 'approved') {
     await publishToChannel(newsId)
   }
 }
 
+// Helper: publish to channel
 async function publishToChannel(newsId: string) {
-  const result = await query(`
-    SELECT n.*, p.tg_publish_channel_id
-    FROM news n
-    JOIN sources s ON n.source_id = s.id
-    JOIN projects p ON s.project_id = p.id
-    WHERE n.id = $1
-  `, [newsId])
+  const channelId = config.telegram.publishChannelId
+  if (!channelId) {
+    console.warn('TG_PUBLISH_CHANNEL_ID not set')
+    return
+  }
 
+  const result = await query('SELECT * FROM news WHERE id = $1', [newsId])
   const news = result.rows[0]
-  if (!news || !news.tg_publish_channel_id) return
+  if (!news) return
 
   const caption =
     `📰 *${news.title}*\n\n` +
@@ -195,12 +179,12 @@ async function publishToChannel(newsId: string) {
 
   try {
     if (news.image_url) {
-      await bot.telegram.sendPhoto(news.tg_publish_channel_id, news.image_url, {
+      await bot.telegram.sendPhoto(channelId, news.image_url, {
         caption,
         parse_mode: 'Markdown'
       })
     } else {
-      await bot.telegram.sendMessage(news.tg_publish_channel_id, caption, {
+      await bot.telegram.sendMessage(channelId, caption, {
         parse_mode: 'Markdown'
       })
     }
@@ -209,58 +193,8 @@ async function publishToChannel(newsId: string) {
   }
 }
 
-
-// Send digest to moderation chat
-export async function sendDigest(projectId: string) {
-  const projectResult = await query(
-    'SELECT * FROM projects WHERE id = $1',
-    [projectId]
-  )
-  const project = projectResult.rows[0]
-  if (!project) return
-
-  const newsResult = await query(`
-    SELECT n.* FROM news n
-    JOIN sources s ON n.source_id = s.id
-    WHERE s.project_id = $1 AND n.status = 'pending'
-    ORDER BY n.created_at DESC
-    LIMIT 10
-  `, [projectId])
-
-  const newsList = newsResult.rows
-  if (newsList.length === 0) return
-
-  let message = `📰 Найдено ${newsList.length} новостей | ${project.name}\n\n`
-
-  const buttons: any[][] = []
-
-  newsList.forEach((news, i) => {
-    const shortTitle = news.title.length > 50
-      ? news.title.substring(0, 50) + '...'
-      : news.title
-    message += `${i + 1}. ${shortTitle}\n`
-
-    buttons.push([
-      Markup.button.callback('✅', `approve:${news.id}`),
-      Markup.button.callback('❌', `reject:${news.id}`),
-      Markup.button.callback('👁', `view:${news.id}`)
-    ])
-  })
-
-  buttons.push([
-    Markup.button.callback('✅ Все', 'approve_all'),
-    Markup.button.callback('❌ Все', 'reject_all')
-  ])
-
-  await bot.telegram.sendMessage(
-    project.tg_moderation_chat_id,
-    message,
-    Markup.inlineKeyboard(buttons)
-  )
-}
-
+// Start bot
 export async function startBot() {
-  // Register bot commands for menu
   await bot.telegram.setMyCommands([
     { command: 'start', description: 'Начать работу' },
     { command: 'pending', description: 'Новости на модерации' },
