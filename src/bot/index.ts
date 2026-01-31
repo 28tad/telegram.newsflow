@@ -5,6 +5,14 @@ import { publishToChannel, formatNewsForModeration } from '../services/publisher
 
 export const bot = new Telegraf(config.telegram.botToken)
 
+// Escape HTML
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 // Start command
 bot.start((ctx) => {
   ctx.reply(
@@ -59,12 +67,12 @@ bot.command('pending', async (ctx) => {
       if (news.imageUrl) {
         sent = await ctx.replyWithPhoto(news.imageUrl, {
           caption,
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           ...buttons
         })
       } else {
-        sent = await ctx.reply(`━━━━━━━━━━━━━━━━━━━━━\n\n${caption}`, {
-          parse_mode: 'Markdown',
+        sent = await ctx.reply(caption, {
+          parse_mode: 'HTML',
           ...buttons
         })
       }
@@ -103,12 +111,12 @@ bot.action(/^approve:(.+)$/, async (ctx) => {
   await ctx.answerCbQuery('✅ Одобрено и выложено')
 
   const title = news.aiTitle || news.title
-  const approvedText = `✅ *${title}*\n\n📢 Выложено в канал`
+  const approvedText = `✅ <b>${escapeHtml(title)}</b>\n\n📢 Выложено в канал`
 
   if (news.imageUrl) {
-    await ctx.editMessageCaption(approvedText, { parse_mode: 'Markdown' })
+    await ctx.editMessageCaption(approvedText, { parse_mode: 'HTML' })
   } else {
-    await ctx.editMessageText(`━━━━━━━━━━━━━━━━━━━━━\n\n${approvedText}`, { parse_mode: 'Markdown' })
+    await ctx.editMessageText(approvedText, { parse_mode: 'HTML' })
   }
 })
 
@@ -128,12 +136,12 @@ bot.action(/^reject:(.+)$/, async (ctx) => {
   await ctx.answerCbQuery('❌ Отклонено')
 
   const title = news.aiTitle || news.title
-  const rejectedText = `❌ *${title}*\n\nОтклонено`
+  const rejectedText = `❌ <b>${escapeHtml(title)}</b>\n\nОтклонено`
 
   if (news.imageUrl) {
-    await ctx.editMessageCaption(rejectedText, { parse_mode: 'Markdown' })
+    await ctx.editMessageCaption(rejectedText, { parse_mode: 'HTML' })
   } else {
-    await ctx.editMessageText(`━━━━━━━━━━━━━━━━━━━━━\n\n${rejectedText}`, { parse_mode: 'Markdown' })
+    await ctx.editMessageText(rejectedText, { parse_mode: 'HTML' })
   }
 })
 

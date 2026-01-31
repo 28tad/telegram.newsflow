@@ -11,20 +11,20 @@ export function formatNewsForChannel(news: News): string {
   const title = news.aiTitle || news.title
   let content = news.aiContent || news.content || ''
 
-  // Обрезаем контент (лимит caption в Telegram ~1024)
-  const maxContentLength = 600
+  // Лимит caption в Telegram ~1024
+  const maxContentLength = 500
   if (content.length > maxContentLength) {
     content = content.substring(0, maxContentLength) + '...'
   }
 
-  let text = `📰 *${escapeMarkdown(title)}*`
+  let text = `📰 <b>${escapeHtml(title)}</b>`
 
   if (content) {
-    text += `\n\n${escapeMarkdown(content)}`
+    text += `\n\n${escapeHtml(content)}`
   }
 
   if (news.url) {
-    text += `\n\n🔗 [Читать полностью](${news.url})`
+    text += `\n\n🔗 <a href="${news.url}">Читать полностью</a>`
   }
 
   return text
@@ -34,20 +34,20 @@ export function formatNewsForModeration(news: News): string {
   const title = news.aiTitle || news.title
   let content = news.aiContent || news.content || ''
 
-  // Обрезаем контент (лимит caption в Telegram ~1024)
-  const maxContentLength = 600
+  // Лимит caption в Telegram ~1024
+  const maxContentLength = 500
   if (content.length > maxContentLength) {
     content = content.substring(0, maxContentLength) + '...'
   }
 
-  let text = `📰 *${escapeMarkdown(title)}*`
+  let text = `📰 <b>${escapeHtml(title)}</b>`
 
   if (content) {
-    text += `\n\n${escapeMarkdown(content)}`
+    text += `\n\n${escapeHtml(content)}`
   }
 
   if (news.url) {
-    text += `\n\n🔗 ${news.url}`
+    text += `\n\n🔗 ${escapeHtml(news.url)}`
   }
 
   return text
@@ -66,12 +66,12 @@ export async function publishToChannel(
     if (news.imageUrl) {
       const result = await telegram.sendPhoto(channelId, news.imageUrl, {
         caption,
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
       })
       messageId = result.message_id
     } else {
       const result = await telegram.sendMessage(channelId, caption, {
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
       })
       messageId = result.message_id
     }
@@ -84,11 +84,9 @@ export async function publishToChannel(
   }
 }
 
-function escapeMarkdown(text: string): string {
+function escapeHtml(text: string): string {
   return text
-    .replace(/\*/g, '\\*')
-    .replace(/_/g, '\\_')
-    .replace(/\[/g, '\\[')
-    .replace(/\]/g, '\\]')
-    .replace(/`/g, '\\`')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
